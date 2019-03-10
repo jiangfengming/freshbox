@@ -1,0 +1,2 @@
+# freshbox
+HTTP Caching library.
