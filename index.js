@@ -16,13 +16,7 @@ class Freshbox {
     let vary = await this.redis.getAsync(req.url + ':vary')
     if (vary === null) return null
 
-    let cacheKey = req.url
-    if (vary) {
-      vary = vary.split(/,\s*/)
-      for (const v of vary) {
-        cacheKey += ':' + v + ':' + (req.headers[v] || '')
-      }
-    }
+    const cacheKey = Freshbox._getCacheKey(req, vary)
 
     let meta = await this.redis.getAsync(cacheKey + ':meta')
     if (!meta) return null
@@ -61,7 +55,25 @@ class Freshbox {
   }
 
   set(req, res, policy) {
+    const cacheKey = Freshbox._getCacheKey(req, res.headers.vary)
 
+    if (policy) {
+      policy.revalidatedPolicy()
+    }
+  }
+
+  static _getCacheKey(req, vary) {
+    let cacheKey = req.url
+
+    if (vary) {
+      vary = vary.toLowerCase().split(/,\s*/)
+      for (const v of vary) {
+        if (v === 'accept-encoding') continue
+        cacheKey += ':' + v + ':' + (req.headers[v] || '')
+      }
+    }
+
+    return cacheKey
   }
 }
 
