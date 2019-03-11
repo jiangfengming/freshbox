@@ -19,5 +19,22 @@
   "bugs": {
     "url": "https://github.com/jiangfengming/freshbox/issues"
   },
-  "homepage": "https://github.com/jiangfengming/freshbox#readme"
+  "homepage": "https://github.com/jiangfengming/freshbox#readme",
+  "devDependencies": {
+    "babel-eslint": "^10.0.1",
+    "eslint": "^5.15.1",
+    "eslint-config-enough": "^0.3.4"
+  },
+  "eslintConfig": {
+    "extends": "enough",
+    "env": {
+      "node": true
+    }
+  },
+  "dependencies": {
+    "http-cache-semantics": "^4.0.3",
+    "redis": "^2.8.0",
+    "redis-rstream": "^1.0.1",
+    "redis-wstream": "^1.0.0"
+  }
 }
