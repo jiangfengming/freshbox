@@ -1,75 +1,92 @@
 const CachePolicy = require('http-cache-semantics')
 const zlib = require('zlib')
-const { createClient } = require('redis')
+const compressible = require('compressible')
+const Redis = require('ioredis')
 const ReadStream = require('redis-rstream')
 const WriteStream = require('redis-wstream')
-const { promisify } = require('util')
 
 class Freshbox {
-  constructor({ redis }) {
-    this.redis = createClient(redis, { detect_buffers: true })
-    this.redis.getAsync = promisify(this.redis.get)
-    this.redis.setAsync = promisify(this.redis.set)
+  constructor({ redis, maxmemory }) {
+    this.redis = new Redis(redis)
+    this.redis.config('set', 'maxmemory', maxmemory)
+    this.redis.config('set', 'maxmemory-policy', 'allkeys-lru')
   }
 
-  async get(req) {
-    let vary = await this.redis.getAsync(req.url + ':vary')
-    if (vary === null) return null
+  get(req) {
+    return new Cache(this.redis, req)
+  }
+}
 
-    const cacheKey = Freshbox._getCacheKey(req, vary)
+class Cache {
+  constructor(redis, { url, headers }) {
+    this.redis = redis
+    this.url = url
+    this.requestHeaders = { ...headers }
+  }
 
-    let meta = await this.redis.getAsync(cacheKey + ':meta')
-    if (!meta) return null
-    meta = JSON.parse(meta)
+  async status() {
+    if (this._status) return this._status
 
-    const policy = CachePolicy.fromObject(meta.policy)
-    if (policy.satisfiesWithoutRevalidation({ headers: req.headers })) {
-      const headers = policy.responseHeaders()
+    this._status = 'MISS'
+    this.vary = await this.redis.get(this.url + ':vary')
+    if (!this.vary) return this._status
 
-      let body = new ReadStream(this.redis, Buffer.from(cacheKey + ':' + meta.version))
-      if (headers['content-encoding'] === 'gzip'
-        && (!req.headers['accept-encoding'] || !req.headers['accept-encoding'].includes('gzip'))
-      ) {
-        delete headers['content-encoding']
-        body = body.pipe(zlib.createGunzip())
-      }
+    this.cacheKey = this._getCacheKey(this.vary)
 
-      return {
-        needRevalidate: false,
-        response: {
-          headers,
-          body
-        }
-      }
-    } else {
-      const headers = policy.revalidationHeaders({ headers: req.headers })
-      return {
-        needRevalidate: true,
-        policy,
-        request: {
-          url: req.url,
-          headers
-        }
-      }
+    const meta = await this.redis.get(this.cacheKey + ':meta')
+    if (!meta) return this._status
+
+    this.meta = JSON.parse(meta)
+
+    if (!await this.redis.exists(this.cacheKey + ':' + this.meta.version)) {
+      return this._status
+    }
+
+    this.policy = CachePolicy.fromObject(this.meta.policy)
+    this.responseHeaders = this.policy.responseHeaders()
+
+    this._status = this.policy.satisfiesWithoutRevalidation({ headers: this.requestHeaders }) ? 'HIT' : 'EXPIRED'
+    return this._status
+  }
+
+  async response() {
+    if (!await this.status() === 'MISS') {
+      return null
+    }
+
+    this.body = new ReadStream(this.redis, Buffer.from(this.cacheKey + ':' + this.meta.version))
+    if (this.responseHeaders['content-encoding'] === 'gzip'
+      && (!this.requestHeaders['accept-encoding'] || !this.requestHeaders['accept-encoding'].includes('gzip'))
+    ) {
+      delete this.responseHeaders['content-encoding']
+      this.body = this.body.pipe(zlib.createGunzip())
+    }
+
+    return {
+      headers: this.responseHeaders,
+      body: this.body
     }
   }
 
-  set(req, res, policy) {
-    const cacheKey = Freshbox._getCacheKey(req, res.headers.vary)
+  async save({ headers, body }) {
+    headers = { ...headers }
 
-    if (policy) {
-      policy.revalidatedPolicy()
+    if (headers.vary) {
+      headers.vary = headers.vary.split(/,\s*/).filter(v => v.toLowerCase() !== 'accept-encoding').join(',')
     }
+
+    const cacheKey = this._getCacheKey(headers.vary)
+
+
   }
 
-  static _getCacheKey(req, vary) {
-    let cacheKey = req.url
+  _getCacheKey(vary) {
+    let cacheKey = this.url
 
     if (vary) {
       vary = vary.toLowerCase().split(/,\s*/)
       for (const v of vary) {
-        if (v === 'accept-encoding') continue
-        cacheKey += ':' + v + ':' + (req.headers[v] || '')
+        cacheKey += ':' + v + ':' + (this.requestHeaders[v] || '')
       }
     }
 

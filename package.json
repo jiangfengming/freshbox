@@ -32,8 +32,9 @@
     }
   },
   "dependencies": {
+    "compressible": "^2.0.16",
     "http-cache-semantics": "^4.0.3",
-    "redis": "^2.8.0",
+    "ioredis": "^4.6.2",
     "redis-rstream": "^1.0.1",
     "redis-wstream": "^1.0.0"
   }
